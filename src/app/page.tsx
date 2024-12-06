@@ -2,10 +2,12 @@
 
 import React, { useState, useEffect } from 'react'
 import { useForm } from 'react-hook-form'
-import { PlusCircle, Briefcase, Book, CreditCard, FileText, Tag } from 'lucide-react'
-import Modal from '../components/Modal'
+import { PlusCircle, Book, CreditCard, FileText, Tag } from 'lucide-react'
+import Modal from '@/components/Modal'
+import Link from 'next/link'
+import { config } from '@/config/env'
 
-const API_BASE_URL = 'http://localhost:8000/api'
+const API_BASE_URL = config.apiBaseUrl
 
 type Business = {
   id: number
@@ -490,6 +492,9 @@ export default function AccountingForm() {
               Create Accounting Entry
             </button>
           </form>
+          <Link href="/reports" className="mt-4 w-full inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
+            View Reports
+          </Link>
         </div>
       </div>
 
@@ -575,3 +580,4 @@ export default function AccountingForm() {
     </div>
   )
 }
+

@@ -1,9 +1,12 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { TrashIcon } from 'lucide-react'
+import Link from 'next/link'
+import { config } from '@/config/env'
+import { apiClient } from '@/lib/api-client'
 
-const API_BASE_URL = 'http://localhost:8000/api'
+const API_BASE_URL = config.apiBaseUrl
 
 type Business = {
   id: number
@@ -45,19 +48,6 @@ type AccountingEntry = {
   description: string
 }
 
-type FormData = {
-  date: string
-  business: string
-  type: string
-  ledger: string
-  head: string
-  cr: number | string
-  dr: number | string
-  mode: string
-  gst: 'with_gst' | 'without_gst'
-  description: string
-}
-
 export default function AccountingReports() {
   const [entries, setEntries] = useState<AccountingEntry[]>([])
   const [filteredEntries, setFilteredEntries] = useState<AccountingEntry[]>([])
@@ -73,68 +63,53 @@ export default function AccountingReports() {
     head: '',
     mode: ''
   })
-
   const [totals, setTotals] = useState({ totalCr: 0, totalDr: 0 })
-
-  useEffect(() => {
-    fetchEntries()
-    fetchFilterOptions()
-  }, [])
-
-  useEffect(() => {
-    applyFilters()
-  }, [entries, filters])
-
-  useEffect(() => {
-    calculateTotals()
-  }, [filteredEntries])
+  const [isLoading, setIsLoading] = useState(false)
 
   const fetchEntries = async () => {
+    setIsLoading(true)
     try {
-      const response = await fetch(`${API_BASE_URL}/accounting/`)
-      if (response.ok) {
-        const data = await response.json()
+      const { data, error } = await apiClient.get<AccountingEntry[]>('/accounting/')
+      if (data) {
         setEntries(data)
         setFilteredEntries(data)
-      } else {
-        console.error('Failed to fetch accounting entries')
+      } else if (error) {
+        console.error('Failed to fetch accounting entries:', error)
       }
-    } catch (error) {
-      console.error('Error fetching accounting entries:', error)
+    } finally {
+      setIsLoading(false)
     }
   }
 
   const fetchFilterOptions = async () => {
     try {
-      const [businessesRes, typesRes, ledgersRes, headsRes, modesRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/businesses/`),
-        fetch(`${API_BASE_URL}/type/`),
-        fetch(`${API_BASE_URL}/ledgers/`),
-        fetch(`${API_BASE_URL}/heads/`),
-        fetch(`${API_BASE_URL}/modes/`)
+      const [
+        { data: businessesData },
+        { data: typesData },
+        { data: ledgersData },
+        { data: headsData },
+        { data: modesData }
+      ] = await Promise.all([
+        apiClient.get<Business[]>('/businesses/'),
+        apiClient.get<Type[]>('/type/'),
+        apiClient.get<Ledger[]>('/ledgers/'),
+        apiClient.get<Head[]>('/heads/'),
+        apiClient.get<Mode[]>('/modes/')
       ])
 
-      if (businessesRes.ok && typesRes.ok && ledgersRes.ok && headsRes.ok && modesRes.ok) {
-        const businessesData = await businessesRes.json()
-        const typesData = await typesRes.json()
-        const ledgersData = await ledgersRes.json()
-        const headsData = await headsRes.json()
-        const modesData = await modesRes.json()
-
+      if (businessesData && typesData && ledgersData && headsData && modesData) {
         setBusinesses(businessesData)
         setTypes(typesData)
         setLedgers(ledgersData)
         setHeads(headsData)
         setModes(modesData)
-      } else {
-        console.error('Failed to fetch filter options')
       }
     } catch (error) {
       console.error('Error fetching filter options:', error)
     }
   }
 
-  const applyFilters = () => {
+  const applyFilters = useCallback(() => {
     let filtered = entries
     if (filters.business) {
       filtered = filtered.filter(entry => entry.business.id.toString() === filters.business)
@@ -152,8 +127,32 @@ export default function AccountingReports() {
       filtered = filtered.filter(entry => entry.mode.id.toString() === filters.mode)
     }
     setFilteredEntries(filtered)
-    console.log("Filtered Entries:", filtered)
-  }
+  }, [entries, filters])
+
+  const calculateTotals = useCallback(() => {
+    const totalCr = filteredEntries.reduce((acc, entry) => {
+      return acc + (typeof entry.cr === 'number' ? entry.cr : parseFloat(entry.cr) || 0)
+    }, 0)
+
+    const totalDr = filteredEntries.reduce((acc, entry) => {
+      return acc + (typeof entry.dr === 'number' ? entry.dr : parseFloat(entry.dr) || 0)
+    }, 0)
+
+    setTotals({ totalCr, totalDr })
+  }, [filteredEntries])
+
+  useEffect(() => {
+    fetchEntries()
+    fetchFilterOptions()
+  }, [])
+
+  useEffect(() => {
+    applyFilters()
+  }, [entries, filters, applyFilters])
+
+  useEffect(() => {
+    calculateTotals()
+  }, [filteredEntries, calculateTotals])
 
   const handleFilterChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const { name, value } = e.target
@@ -180,54 +179,15 @@ export default function AccountingReports() {
     }
   }
 
-  const handleSubmit = async (data: FormData) => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/accounting/`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          ...data,
-          business: parseInt(data.business),
-          type: parseInt(data.type),
-          ledger: parseInt(data.ledger),
-          head: parseInt(data.head),
-          mode: parseInt(data.mode),
-        }),
-      })
-
-      if (response.ok) {
-        const newEntry = await response.json()
-        setEntries(prevEntries => [...prevEntries, newEntry])
-        setFilteredEntries(prevFiltered => [...prevFiltered, newEntry])
-        alert('Accounting entry created successfully!')
-      } else {
-        const errorData = await response.json()
-        alert(`Failed to create accounting entry: ${errorData.detail || 'Unknown error'}`)
-      }
-    } catch (error) {
-      console.error('Error:', error)
-      alert('An error occurred while creating the accounting entry')
-    }
-  }
-
-  const calculateTotals = () => {
-    const totalCr = filteredEntries.reduce((acc, entry) => {
-      return acc + (typeof entry.cr === 'number' ? entry.cr : parseFloat(entry.cr) || 0)
-    }, 0)
-
-    const totalDr = filteredEntries.reduce((acc, entry) => {
-      return acc + (typeof entry.dr === 'number' ? entry.dr : parseFloat(entry.dr) || 0)
-    }, 0)
-
-    setTotals({ totalCr, totalDr })
-  }
-
   return (
     <div className="min-h-screen bg-gray-100 py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-7xl mx-auto">
-        <h1 className="text-3xl font-bold mb-6 text-gray-900">Accounting Reports</h1>
+        <div className="flex justify-between items-center mb-6">
+          <h1 className="text-3xl font-bold text-gray-900">Accounting Reports</h1>
+          <Link href="/" className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+            Add New
+          </Link>
+        </div>
         
         <div className="mb-6 flex flex-wrap gap-4">
           <select
@@ -288,59 +248,63 @@ export default function AccountingReports() {
         </div>
 
         <div className="bg-white shadow-md rounded-lg overflow-hidden">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-bold text-black uppercase tracking-wider">Date</th>
-                <th className="px-6 py-3 text-left text-xs font-bold text-black uppercase tracking-wider">Business</th>
-                <th className="px-6 py-3 text-left text-xs font-bold text-black uppercase tracking-wider">Type</th>
-                <th className="px-6 py-3 text-left text-xs font-bold text-black uppercase tracking-wider">Ledger</th>
-                <th className="px-6 py-3 text-left text-xs font-bold text-black uppercase tracking-wider">Head</th>
-                <th className="px-6 py-3 text-left text-xs font-bold text-black uppercase tracking-wider">Cr Amount</th>
-                <th className="px-6 py-3 text-left text-xs font-bold text-black uppercase tracking-wider">Dr Amount</th>
-                <th className="px-6 py-3 text-left text-xs font-bold text-black uppercase tracking-wider">Mode</th>
-                <th className="px-6 py-3 text-left text-xs font-bold text-black uppercase tracking-wider">GST</th>
-                <th className="px-6 py-3 text-left text-xs font-bold text-black uppercase tracking-wider">Description</th>
-                <th className="px-6 py-3 text-left text-xs font-bold text-black uppercase tracking-wider">Action</th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {filteredEntries.map((entry) => (
-                <tr key={entry.id}>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{entry.date}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{entry.business.name}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{entry.type.name}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{entry.ledger.name}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{entry.head.name}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {typeof entry.cr === 'number' ? entry.cr.toFixed(2) : entry.cr}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {typeof entry.dr === 'number' ? entry.dr.toFixed(2) : entry.dr}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{entry.mode.name}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{entry.gst}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{entry.description}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                    <button
-                      onClick={() => handleDelete(entry.id)}
-                      className="text-red-600 hover:text-red-900"
-                    >
-                      <TrashIcon className="h-5 w-5" />
-                    </button>
-                  </td>
+          {isLoading ? (
+            <div className="p-4 text-center">Loading...</div>
+          ) : (
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-bold text-black uppercase tracking-wider">Date</th>
+                  <th className="px-6 py-3 text-left text-xs font-bold text-black uppercase tracking-wider">Business</th>
+                  <th className="px-6 py-3 text-left text-xs font-bold text-black uppercase tracking-wider">Type</th>
+                  <th className="px-6 py-3 text-left text-xs font-bold text-black uppercase tracking-wider">Ledger</th>
+                  <th className="px-6 py-3 text-left text-xs font-bold text-black uppercase tracking-wider">Head</th>
+                  <th className="px-6 py-3 text-left text-xs font-bold text-black uppercase tracking-wider">Cr Amount</th>
+                  <th className="px-6 py-3 text-left text-xs font-bold text-black uppercase tracking-wider">Dr Amount</th>
+                  <th className="px-6 py-3 text-left text-xs font-bold text-black uppercase tracking-wider">Mode</th>
+                  <th className="px-6 py-3 text-left text-xs font-bold text-black uppercase tracking-wider">GST</th>
+                  <th className="px-6 py-3 text-left text-xs font-bold text-black uppercase tracking-wider">Description</th>
+                  <th className="px-6 py-3 text-left text-xs font-bold text-black uppercase tracking-wider">Action</th>
                 </tr>
-              ))}
-            </tbody>
-            <tfoot className="bg-gray-50">
-              <tr>
-                <td colSpan={5} className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">Totals</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{totals.totalCr.toFixed(2)}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{totals.totalDr.toFixed(2)}</td>
-                <td colSpan={5}></td>
-              </tr>
-            </tfoot>
-          </table>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {filteredEntries.map((entry) => (
+                  <tr key={entry.id}>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{entry.date}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{entry.business.name}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{entry.type.name}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{entry.ledger.name}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{entry.head.name}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {typeof entry.cr === 'number' ? entry.cr.toFixed(2) : entry.cr}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {typeof entry.dr === 'number' ? entry.dr.toFixed(2) : entry.dr}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{entry.mode.name}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{entry.gst}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{entry.description}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                      <button
+                        onClick={() => handleDelete(entry.id)}
+                        className="text-red-600 hover:text-red-900"
+                      >
+                        <TrashIcon className="h-5 w-5" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="bg-gray-50">
+                <tr>
+                  <td colSpan={5} className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">Totals</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{totals.totalCr.toFixed(2)}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{totals.totalDr.toFixed(2)}</td>
+                  <td colSpan={4}></td>
+                </tr>
+              </tfoot>
+            </table>
+          )}
         </div>
       </div>
     </div>
